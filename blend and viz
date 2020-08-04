@@ -1,0 +1,57 @@
+library(nflscrapR)
+library(tidyverse)
+library(dplyr)
+library(na.tools)
+library(ggimage)
+library(nflfastR)
+
+##https://twitter.com/ihatejohncronce/status/1289644911017332736
+
+##load in the data from @nflfastR, only grab the fields we need
+seasons <- 2015:2019
+past_five <- purrr::map_df(seasons, function(x) {
+  readRDS(
+    url(
+      glue::glue("https://raw.githubusercontent.com/guga31bb/nflfastR-data/master/data/play_by_play_{x}.rds")
+    )
+  )
+} %>%
+  select(play_id,posteam,epa,score_differential,score_differential_post,game_seconds_remaining,game_id)
+)
+
+##table for what the final score is for each team in each game. Grouping by posteam is important to be sure each team gets their mirrored point differentials.
+##The slice(n()) function gives us the final record of each grouping, in this case, sorted by game seconds remaining.
+final_score <- past_five %>%
+  filter(posteam != "NA") %>%
+  group_by(posteam, game_id) %>%
+  slice(n()) %>%
+  select(posteam,game_id, score_differential_post)
+
+##table for cumulative epa. leave out null posteam plays, then sum the epa. simple enough
+final_epa <- past_five %>%
+  filter(posteam != "NA") %>%
+  group_by(posteam, game_id) %>%
+  summarise(cumulative_epa = sum(epa, na.rm = TRUE))
+
+##join together
+tbl <- inner_join(final_score,final_epa, by = c("posteam","game_id"))
+
+##create a quick linear model with our two fields of interest
+lm <- lm(score_differential_post ~ cumulative_epa, data=tbl)
+
+##find the r squared of the linear model
+summary(lm)$r.squared
+##[1] 0.4191459 - use this in the subtitle
+
+
+tbl %>%
+  ggplot(aes(y = score_differential_post, x = cumulative_epa)) +
+  geom_point(alpha = 0.5, color = "navy blue")+
+  stat_smooth(method = "gam", color = "black") +
+  theme_tan() + ##this is a custom theme
+  labs(x = "Cumulative EPA",
+       y = "Final Score Differential",
+       title = "Is EPA just Score Differential?",
+       subtitle = "well, the R squared is 0.419,,,",
+       caption = "Data: @nflfastR | Viz: @Cardanski0
+       *Showing games between '15 and '19 seasons - a total of 2670")
